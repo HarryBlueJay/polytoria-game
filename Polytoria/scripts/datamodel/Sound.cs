@@ -21,6 +21,7 @@ public sealed partial class Sound : Dynamic
 {
 	public const float SoundDistanceMultipler = 1.25f;
 	private const float MinPitch = 0.001f;
+	private const float MaxVolume = 2;
 	private AudioAsset? _asset;
 	private AudioStreamPlayer? _audioPlayer;
 	private AudioStreamPlayer3D? _audioPlayer3D;
@@ -33,6 +34,7 @@ public sealed partial class Sound : Dynamic
 	private float _volume = 1;
 	private float _time = 0;
 	private bool _loop = false;
+	private float _loopStart = 0;
 	private bool _playInWorld = false;
 	private bool _paused = false;
 	private float _pitch = 1f;
@@ -94,7 +96,7 @@ public sealed partial class Sound : Dynamic
 		get => _volume;
 		set
 		{
-			_volume = Mathf.Clamp(value, 0, 2);
+			_volume = Mathf.Clamp(value, 0, MaxVolume);
 			UpdateVolume();
 			OnPropertyChanged();
 		}
@@ -134,12 +136,39 @@ public sealed partial class Sound : Dynamic
 			switch (_currentStream)
 			{
 				case AudioStreamMP3 aStream:
-					aStream.LoopOffset = 0;
 					aStream.Loop = value;
 					break;
 				case AudioStreamOggVorbis aStream:
-					aStream.LoopOffset = 0;
 					aStream.Loop = value;
+					break;
+					// unused in Polytoria
+					//case AudioStreamWav aStream:
+			}
+			OnPropertyChanged();
+		}
+	}
+
+	[Editable, ScriptProperty]
+	public float LoopStart
+	{
+		get => _loopStart;
+		set
+		{
+			// unclamped value is reapplied and clamped when Sound is loaded
+			if (_currentStream != null)
+			{
+				value = (float)Mathf.Clamp(value, 0, _currentStream.GetLength());
+			}
+
+			_loopStart = value;
+
+			switch (_currentStream)
+			{
+				case AudioStreamMP3 aStream:
+					aStream.LoopOffset = value;
+					break;
+				case AudioStreamOggVorbis aStream:
+					aStream.LoopOffset = value;
 					break;
 					// unused in Polytoria
 					//case AudioStreamWav aStream:
@@ -240,9 +269,7 @@ public sealed partial class Sound : Dynamic
 	[ScriptProperty] public bool Loading { get; private set; } = false;
 
 	[ScriptProperty]
-	public float Length => _audioPlayer != null
-				? (float)_audioPlayer.Stream.GetLength()
-				: _audioPlayer3D != null ? (float)_audioPlayer3D.Stream.GetLength() : 0;
+	public float Length => (_currentStream != null ? (float)_currentStream.GetLength() : 0);
 
 	[ScriptProperty] public PTSignal Loaded { get; private set; } = new();
 	[ScriptProperty] public PTSignal Finished { get; private set; } = new();
@@ -405,9 +432,9 @@ public sealed partial class Sound : Dynamic
 	[NetRpc(AuthorityMode.Authority, TransferMode = TransferMode.Reliable)]
 	private void NetPlayOneshot(float volume)
 	{
-		if (volume > 1)
+		if (volume > MaxVolume)
 		{
-			volume = 1;
+			volume = MaxVolume;
 		}
 
 		InternalPlayOneShot(volume);
@@ -522,7 +549,9 @@ public sealed partial class Sound : Dynamic
 		_currentStream = (AudioStream)audio;
 		_audioPlayer?.Stream = (AudioStream)audio;
 		_audioPlayer3D?.Stream = (AudioStream)audio;
-		Loop = _loop; // reapply to new stream
+		// reapply to new stream
+		LoopStart = _loopStart;
+		Loop = _loop;
 
 		Loaded.Invoke();
 
